@@ -1,0 +1,510 @@
+
+def testing():
+    # !pip install gpt4all
+
+    # List available models
+    available_models = GPT4All.list_models()
+    print(available_models)
+
+    # Choose a valid model name from the printed list
+    # Example:
+    # model_name = "ggml-gpt4all-l13b-snoozy.bin"
+    # Choosing the first available model, but using 'filename' instead of 'model_name'
+    model_name = available_models[0]['filename']
+
+    # Initialize the GPT4All model
+    model = GPT4All(model_name)
+
+
+    # Get the current directory
+    current_directory = os.getcwd()
+
+    # Construct the full path to the PDF
+    pdf_path = os.path.join(current_directory, 'om_hrs050_en-v_1_388aa0ae_compressed.pdf')
+
+    # ... your existing code using the updated pdf_path ...
+
+
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'  # Replace with your uploaded file name
+
+    #extract text
+
+    def extract_text_with_page_numbers(pdf_path):
+        doc = fitz.open(pdf_path)
+        pdf_text = {}
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text = page.get_text()
+            pdf_text[page_num + 1] = text
+        return pdf_text
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'
+    pdf_text = extract_text_with_page_numbers(pdf_path)
+
+    #store and index the text:
+
+    # !pip install faiss-cpu
+
+
+
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    def create_embeddings(pdf_text):
+        embeddings = []
+        page_numbers = []
+        for page_num, text in pdf_text.items():
+            sentences = text.split('\n')
+            sentence_embeddings = model.encode(sentences)
+            embeddings.extend(sentence_embeddings)
+            page_numbers.extend([page_num] * len(sentence_embeddings))
+        return np.array(embeddings), page_numbers
+
+    pdf_embeddings, page_numbers = create_embeddings(pdf_text)
+
+    index = faiss.IndexFlatL2(pdf_embeddings.shape[1])
+    index.add(pdf_embeddings)
+
+    #search for answers
+
+    def search_answer_in_pdf(question, index, pdf_embeddings, page_numbers):
+        question_embedding = model.encode([question])
+        D, I = index.search(question_embedding, k=1)
+        if D[0][0] < 0.5:  # Adjust threshold as needed
+            best_page = page_numbers[I[0][0]]
+            return f"Answer found on page {best_page}"
+        else:
+            return "No answer found in the PDF."
+
+    question = "Give me the information about AL 11"
+    answer = search_answer_in_pdf(question, index, pdf_embeddings, page_numbers)
+    print(answer)
+
+    # !pip install torch transformers PyMuPDF pdfminer.six sentence-transformers faiss-cpu
+
+    def extract_text_with_page_numbers(pdf_path):
+        doc = fitz.open(pdf_path)
+        pdf_text = {}
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text = page.get_text()
+            pdf_text[page_num + 1] = text
+        return pdf_text
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'
+    pdf_text = extract_text_with_page_numbers(pdf_path)
+
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    def create_embeddings(pdf_text):
+        embeddings = []
+        sentences = []
+        page_numbers = []
+        for page_num, text in pdf_text.items():
+            page_sentences = text.split('\n')
+            sentence_embeddings = model.encode(page_sentences)
+            embeddings.extend(sentence_embeddings)
+            sentences.extend(page_sentences)
+            page_numbers.extend([page_num] * len(page_sentences))
+        return np.array(embeddings), sentences, page_numbers
+
+    pdf_embeddings, sentences, page_numbers = create_embeddings(pdf_text)
+
+    index = faiss.IndexFlatL2(pdf_embeddings.shape[1])
+    index.add(pdf_embeddings)
+
+    def search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers):
+        question_embedding = model.encode([question])
+        D, I = index.search(question_embedding, k=1)
+        if D[0][0] < 0.5:  # Adjust threshold as needed
+            best_page = page_numbers[I[0][0]]
+            best_sentence = sentences[I[0][0]]
+            return f"Answer found on page {best_page}: {best_sentence}"
+        else:
+            return "No answer found in the PDF."
+
+    question = "Give me the information about AL11"
+    answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers)
+    print(answer)
+
+    test_questions = [
+        "Give me the information about AL11",
+        "How do I install the component?",
+        "What are the safety precautions?"
+    ]
+
+    for question in test_questions:
+        answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers)
+        print(f"Q: {question}\nA: {answer}\n")
+
+    # !pip install torch transformers PyMuPDF pdfminer.six sentence-transformers faiss-cpu
+
+
+
+    def extract_text_with_page_numbers(pdf_path):
+        doc = fitz.open(pdf_path)
+        pdf_text = {}
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text = page.get_text()
+            pdf_text[page_num + 1] = text
+        return pdf_text
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'
+    pdf_text = extract_text_with_page_numbers(pdf_path)
+
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    def create_embeddings(pdf_text):
+        embeddings = []
+        sentences = []
+        page_numbers = []
+        for page_num, text in pdf_text.items():
+            page_sentences = text.split('\n')
+            sentence_embeddings = model.encode(page_sentences)
+            embeddings.extend(sentence_embeddings)
+            sentences.extend(page_sentences)
+            page_numbers.extend([page_num] * len(page_sentences))
+        return np.array(embeddings), sentences, page_numbers
+
+    pdf_embeddings, sentences, page_numbers = create_embeddings(pdf_text)
+
+    index = faiss.IndexFlatL2(pdf_embeddings.shape[1])
+    index.add(pdf_embeddings)
+
+    def search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers):
+        question_embedding = model.encode([question])
+        D, I = index.search(question_embedding, k=1)
+        if D[0][0] < 0.5:  # Adjust threshold as needed
+            best_page = page_numbers[I[0][0]]
+            best_sentence = sentences[I[0][0]]
+            return f"Answer found on page {best_page}: {best_sentence}"
+        else:
+            return "No answer found in the PDF."
+
+    question = "Give me the information about AL11"
+    answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers)
+    print(answer)
+
+    # prompt: answer
+
+    test_questions = [
+        "Give me the information about AL11",
+        "How do I install the component?",
+        "What are the safety precautions?"
+    ]
+
+    for question in test_questions:
+        answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers)
+        print(f"Q: {question}\nA: {answer}\n")
+
+    test_questions = [
+        "Give me the information about al11",
+        "How do I install the component?",
+        "What are the safety precautions?"
+    ]
+
+    for question in test_questions:
+        answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers)
+        print(f"Q: {question}\nA: {answer}\n")
+
+    # !pip install torch transformers PyMuPDF pdfminer.six sentence-transformers faiss-cpu pdfplumber
+
+
+    def extract_text_and_tables(pdf_path):
+        doc = fitz.open(pdf_path)
+        pdf_text = {}
+        pdf_tables = {}
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text = page.get_text()
+            pdf_text[page_num + 1] = text
+
+            with pdfplumber.open(pdf_path) as pdf:
+                page = pdf.pages[page_num]
+                tables = page.extract_tables()
+                if tables:
+                    pdf_tables[page_num + 1] = tables
+        return pdf_text, pdf_tables
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'
+    pdf_text, pdf_tables = extract_text_and_tables(pdf_path)
+
+
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    def create_embeddings(pdf_text):
+        embeddings = []
+        sentences = []
+        page_numbers = []
+        for page_num, text in pdf_text.items():
+            page_sentences = text.split('\n')
+            sentence_embeddings = model.encode(page_sentences)
+            embeddings.extend(sentence_embeddings)
+            sentences.extend(page_sentences)
+            page_numbers.extend([page_num] * len(page_sentences))
+        return np.array(embeddings), sentences, page_numbers
+
+    pdf_embeddings, sentences, page_numbers = create_embeddings(pdf_text)
+
+    index = faiss.IndexFlatL2(pdf_embeddings.shape[1])
+    index.add(pdf_embeddings)
+
+    def search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables):
+        question_embedding = model.encode([question])
+        D, I = index.search(question_embedding, k=1)
+        if D[0][0] < 0.5:  # Adjust threshold as needed
+            best_page = page_numbers[I[0][0]]
+            best_sentence = sentences[I[0][0]]
+            if best_page in pdf_tables:
+                table_data = pdf_tables[best_page]
+                return f"Answer found on page {best_page}: {best_sentence}\nTable data: {table_data}"
+            else:
+                return f"Answer found on page {best_page}: {best_sentence}"
+        else:
+            return "No answer found in the PDF."
+
+    question = "Give me the information about AL11"
+    answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables)
+    print(answer)
+
+    test_questions = [
+        "Give me the information about AL11",
+        "How do I install the component?",
+        "What are the safety precautions?"
+    ]
+
+    for question in test_questions:
+        answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables)
+        print(f"Q: {question}\nA: {answer}\n")
+
+
+
+    #Improved Script with Whitespace Normalization and Robust Tokenization
+
+    # !pip install torch transformers PyMuPDF pdfminer.six sentence-transformers faiss-cpu pdfplumber
+
+
+    def normalize_text(text):
+        # Remove extra spaces and normalize tokens
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'\b(al)\s*(\d+)\b', r'\1\2', text, flags=re.IGNORECASE)
+        return text
+
+    def extract_text_and_tables(pdf_path):
+        doc = fitz.open(pdf_path)
+        pdf_text = {}
+        pdf_tables = {}
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text = page.get_text()
+            text = normalize_text(text)
+            pdf_text[page_num + 1] = text
+
+            with pdfplumber.open(pdf_path) as pdf:
+                page = pdf.pages[page_num]
+                tables = page.extract_tables()
+                if tables:
+                    pdf_tables[page_num + 1] = tables
+        return pdf_text, pdf_tables
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'
+    pdf_text, pdf_tables = extract_text_and_tables(pdf_path)
+
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    def create_embeddings(pdf_text):
+        embeddings = []
+        sentences = []
+        page_numbers = []
+        for page_num, text in pdf_text.items():
+            page_sentences = text.split('\n')
+            sentence_embeddings = model.encode(page_sentences)
+            embeddings.extend(sentence_embeddings)
+            sentences.extend(page_sentences)
+            page_numbers.extend([page_num] * len(page_sentences))
+        return np.array(embeddings), sentences, page_numbers
+
+    pdf_embeddings, sentences, page_numbers = create_embeddings(pdf_text)
+
+    index = faiss.IndexFlatL2(pdf_embeddings.shape[1])
+    index.add(pdf_embeddings)
+
+    def search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables):
+        question = normalize_text(question)
+        question_embedding = model.encode([question])
+        D, I = index.search(question_embedding, k=1)
+        if D[0][0] < 0.5:  # Adjust threshold as needed
+            best_page = page_numbers[I[0][0]]
+            best_sentence = sentences[I[0][0]]
+            if best_page in pdf_tables:
+                table_data = pdf_tables[best_page]
+                return f"Answer found on page {best_page}: {best_sentence}\nTable data: {table_data}"
+            else:
+                return f"Answer found on page {best_page}: {best_sentence}"
+        else:
+            return "No answer found in the PDF."
+
+    question = "Give me the information about AL 11"
+    answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables)
+    print(answer)
+
+    test_questions = [
+        "Give me the information about AL11",
+        "How do I install the component?",
+        "What are the safety precautions?"
+    ]
+
+    for question in test_questions:
+        answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables)
+        print(f"Q: {question}\nA: {answer}\n")
+
+    # !pip install torch transformers PyMuPDF pdfminer.six sentence-transformers faiss-cpu pdfplumber
+
+    # Get the current directory
+    current_directory = os.getcwd()
+
+    # Construct the full path to the PDF
+    pdf_path = os.path.join(current_directory, 'om_hrs050_en-v_1_388aa0ae_compressed.pdf')
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'
+
+    def normalize_text(text):
+        # Remove extra spaces and normalize tokens
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'\b(al)\s*(\d+)\b', r'\1\2', text, flags=re.IGNORECASE)
+        return text
+
+    def extract_text_and_tables(pdf_path):
+        doc = fitz.open(pdf_path)
+        pdf_text = {}
+        pdf_tables = {}
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text = page.get_text()
+            text = normalize_text(text)
+            pdf_text[page_num + 1] = text
+
+            with pdfplumber.open(pdf_path) as pdf:
+                page = pdf.pages[page_num]
+                tables = page.extract_tables()
+                if tables:
+                    pdf_tables[page_num + 1] = tables
+        return pdf_text, pdf_tables
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'
+    pdf_text, pdf_tables = extract_text_and_tables(pdf_path)
+    print("Extracted text and tables from PDF.")
+
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    def create_embeddings(pdf_text):
+        embeddings = []
+        sentences = []
+        page_numbers = []
+        for page_num, text in pdf_text.items():
+            page_sentences = text.split('\n')
+            sentence_embeddings = model.encode(page_sentences)
+            embeddings.extend(sentence_embeddings)
+            sentences.extend(page_sentences)
+            page_numbers.extend([page_num] * len(page_sentences))
+        return np.array(embeddings), sentences, page_numbers
+
+    pdf_embeddings, sentences, page_numbers = create_embeddings(pdf_text)
+    print("Created embeddings for PDF text.")
+
+    index = faiss.IndexFlatL2(pdf_embeddings.shape[1])
+    index.add(pdf_embeddings)
+    print("Indexed embeddings.")
+
+    def search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables):
+        question = normalize_text(question)
+        question_embedding = model.encode([question])
+        D, I = index.search(question_embedding, k=1)
+        if D[0][0] < 0.5:  # Adjust threshold as needed
+            best_page = page_numbers[I[0][0]]
+            best_sentence = sentences[I[0][0]]
+            if best_page in pdf_tables:
+                table_data = pdf_tables[best_page]
+                return f"Answer found on page {best_page}: {best_sentence}\nTable data: {table_data}"
+            else:
+                return f"Answer found on page {best_page}: {best_sentence}"
+        else:
+            return "No answer found in the PDF."
+
+    question = "Give me the information about Temperature unit switching etting"
+    answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables)
+    print(answer)
+
+    test_questions = [
+        "Give me the information about Temperature unit",
+        "How do I install the component?",
+        "What are the safety precautions?"
+    ]
+
+    for question in test_questions:
+        answer = search_answer_in_pdf(question, index, pdf_embeddings, sentences, page_numbers, pdf_tables)
+        print(f"Q: {question}\nA: {answer}\n")
+
+
+
+
+
+
+
+
+
+
+
+    # !pip install torch transformers PyMuPDF pdfminer.six
+
+    # Get the current directory
+    current_directory = os.getcwd()
+
+    # Construct the full path to the PDF
+    pdf_path = os.path.join(current_directory, 'om_hrs050_en-v_1_388aa0ae_compressed.pdf')
+
+    # ... your existing code using the updated pdf_path ...
+
+    pdf_path = 'om_hrs050_en-v_1_388aa0ae_compressed.pdf'  # Replace with your uploaded file name
+
+    def extract_text_with_page_numbers(pdf_path):
+        doc = fitz.open(pdf_path)
+        pdf_text = {}
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text = page.get_text()
+            pdf_text[page_num + 1] = text
+        return pdf_text
+
+    # Get the current directory
+    current_directory = os.getcwd()
+
+    # Construct the full path to the PDF
+    pdf_path = os.path.join(current_directory, 'om_hrs050_en-v_1_388aa0ae_compressed.pdf') # Ensure this path is correct
+
+    pdf_text = extract_text_with_page_numbers(pdf_path)
+
+    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+    model = GPT2LMHeadModel.from_pretrained('gpt2')
+
+    def search_answer_in_pdf(question, pdf_text):
+        for page_num, text in pdf_text.items():
+            if re.search(re.escape(question), text, re.IGNORECASE):
+                return f"Answer found on page {page_num}: {text}"
+        return "No answer found in the PDF."
+
+    question = "Alarm buzzer"
+    answer = search_answer_in_pdf(question, pdf_text)
+    print(answer)
+
+    test_questions = [
+        "What is the power range for the specific axis?",
+        "How do I install the component?",
+        "What are the safety precautions?",
+        "informationf of alarm buzzer"
+    ]
+
+    for question in test_questions:
+        answer = search_answer_in_pdf(question, pdf_text)
+        print(f"Q: {question}\nA: {answer}\n")

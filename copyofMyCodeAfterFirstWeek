@@ -1,0 +1,345 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# -*- coding: utf-8 -*-
+"""
+Original file is located at
+    https://colab.research.google.com/drive/1Qa_otPYEUJOwjTKYVTCx6eso8M0S35R4
+"""
+
+# Dependencies: pip install torch transformers PyMuPDF pdfminer.six sentence-transformers faiss-cpu pdfplumber
+
+##this code shows just the page number when it is in the table
+
+# !pip install torch transformers PyMuPDF pdfminer.six sentence-transformers
+
+import os
+import sys
+import re
+import fitz  # PyMuPDF
+from gpt4all import GPT4All
+
+import faiss
+import numpy as np
+import tkinter as tk
+from tkinter import filedialog
+
+import pdfplumber
+from sentence_transformers import SentenceTransformer, util
+from transformers import GPT2Tokenizer, GPT2LMHeadModel
+
+
+PDF_PATH = "in/om_hrs050_en-v_1_388aa0ae.pdf"
+
+def run_model(question):
+    pdf_text = extract_text_with_page_numbers(PDF_PATH)
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    pdf_embeddings = create_embeddings(model, pdf_text)
+
+    # test_questions = [
+    #     "Give me the information about AL 11",
+    #     "How do I install the component?",
+    #     "What are the safety precautions?"
+    # ]
+
+    answer = search_answer_in_pdf(question, pdf_text, pdf_embeddings, model)
+    print(f"Q: {question}\nA: {answer}\n")
+    return answer
+
+def show_gui():
+    # Create main window
+    root = tk.Tk()
+    root.title("SMC LLMs")
+    root.geometry("1200x800")
+
+    # File selection input
+    file_label = tk.Label(root, text="Select a PDF file:")
+    file_label.pack(pady=5)
+    file_frame = tk.Frame(root)
+    file_frame.pack(pady=5)
+    file_entry = tk.Entry(file_frame, width=40)
+    file_entry.pack(side=tk.LEFT, padx=5)
+    
+    def browse_file():
+        file_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
+        if file_path:
+            global PDF_PATH
+            PDF_PATH = file_path
+            file_entry.delete(0, tk.END)
+            file_entry.insert(0, file_path)
+
+    browse_button = tk.Button(file_frame, text="Browse", command=browse_file)
+    browse_button.pack(side=tk.RIGHT, padx=5)
+
+    # Text input field
+    text_label = tk.Label(root, text="Enter your question:")
+    text_label.pack(pady=5)
+    text_entry = tk.Entry(root, width=50)
+    text_entry.pack(pady=5)
+
+    # Answer output field
+    answer_label = tk.Label(root, text="Answer:")
+    answer_label.pack(pady=5)
+    answer_text = tk.Text(root, width=70, height=10, wrap=tk.WORD)
+    answer_text.pack(pady=5)
+    answer_text.config(state=tk.DISABLED)
+
+    def run_and_display_answer():
+        question = text_entry.get()
+        answer = run_model(question)
+        answer_text.config(state=tk.NORMAL)
+        answer_text.delete(1.0, tk.END)
+        answer_text.insert(tk.END, answer)
+        answer_text.config(state=tk.DISABLED)
+
+    run_button = tk.Button(root, text="Run", command=run_and_display_answer)
+    run_button.pack(pady=10)
+
+    # Run the application
+    root.mainloop()
+
+def extract_text_with_page_numbers(pdf_path):
+    doc = fitz.open(pdf_path)
+    pdf_text = {}
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        text = page.get_text()
+        pdf_text[page_num + 1] = text
+    return pdf_text
+
+def create_embeddings(model, pdf_text):
+    embeddings = {}
+    for page_num, text in pdf_text.items():
+        sentences = text.split('\n')
+        embeddings[page_num] = model.encode(sentences, convert_to_tensor=True)
+    return embeddings
+
+def search_answer_in_pdf(question, pdf_text, pdf_embeddings, model):
+    question_embedding = model.encode(question, convert_to_tensor=True)
+    best_score = -1
+    best_page = None
+    best_sentence = None
+
+    for page_num, embeddings in pdf_embeddings.items():
+        scores = util.pytorch_cos_sim(question_embedding, embeddings)
+        max_score, max_idx = scores.max(dim=1)
+        if max_score.item() > best_score:
+            best_score = max_score.item()
+            best_page = page_num
+            best_sentence = pdf_text[page_num].split('\n')[max_idx.item()]
+
+    if best_score > 0.5:  # Adjust threshold as needed
+        return f"Answer found on page {best_page}: {best_sentence}"
+    else:
+        return "No answer found in the PDF."
+
+
+def main():
+    show_gui()
+    return 0
+
+
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+
+
+
+# second part separate from above
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# -*- coding: utf-8 -*-
+"""
+Original file is located at
+    https://colab.research.google.com/drive/1Qa_otPYEUJOwjTKYVTCx6eso8M0S35R4
+"""
+
+# Dependencies: pip install torch transformers PyMuPDF pdfminer.six sentence-transformers faiss-cpu pdfplumber
+
+##this code shows just the page number when it is in the table
+
+# !pip install torch transformers PyMuPDF pdfminer.six sentence-transformers
+
+import os
+import sys
+import re
+import fitz  # PyMuPDF
+from gpt4all import GPT4All
+
+import faiss
+import numpy as np
+import tkinter as tk
+from tkinter import filedialog
+
+import pdfplumber
+from sentence_transformers import SentenceTransformer, util
+from transformers import GPT2Tokenizer, GPT2LMHeadModel
+
+
+PDF_PATH = "in/om_hrs050_en-v_1_388aa0ae.pdf"
+
+def run_model(question):
+    pdf_text = extract_text_with_page_numbers(PDF_PATH)
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    pdf_embeddings = create_embeddings(model, pdf_text)
+
+    # test_questions = [
+    #     "Give me the information about AL 11",
+    #     "How do I install the component?",
+    #     "What are the safety precautions?"
+    # ]
+
+    answer = search_answer_in_pdf(question, pdf_text, pdf_embeddings, model)
+    print(f"Q: {question}\nA: {answer}\n")
+    return answer
+
+def show_gui():
+    # Create main window
+    root = tk.Tk()
+    root.title("SMC LLMs")
+    root.geometry("1200x800")
+
+    # Folder selection input
+    folder_label = tk.Label(root, text="Select a folder containing PDF files:")
+    folder_label.pack(pady=5)
+    folder_frame = tk.Frame(root)
+    folder_frame.pack(pady=5)
+    folder_entry = tk.Entry(folder_frame, width=40)
+    folder_entry.pack(side=tk.LEFT, padx=5)
+    
+    def browse_folder():
+        folder_path = filedialog.askdirectory()
+        if folder_path:
+            global PDF_PATH
+            PDF_PATH = folder_path
+            folder_entry.delete(0, tk.END)
+            folder_entry.insert(0, folder_path)
+
+    browse_button = tk.Button(folder_frame, text="Browse", command=browse_folder)
+    browse_button.pack(side=tk.RIGHT, padx=5)
+
+    # Text input field
+    text_label = tk.Label(root, text="Enter your question:")
+    text_label.pack(pady=5)
+    text_entry = tk.Entry(root, width=50)
+    text_entry.pack(pady=5)
+
+    # Answer output field
+    answer_label = tk.Label(root, text="Answer:")
+    answer_label.pack(pady=5)
+    answer_text = tk.Text(root, width=70, height=10, wrap=tk.WORD)
+    answer_text.pack(pady=5)
+    answer_text.config(state=tk.DISABLED)
+
+    def run_and_display_answer():
+        question = text_entry.get()
+        answer = run_model_for_all_pdfs(question)
+        answer_text.config(state=tk.NORMAL)
+        answer_text.delete(1.0, tk.END)
+        answer_text.insert(tk.END, answer)
+        answer_text.config(state=tk.DISABLED)
+
+    run_button = tk.Button(root, text="Run", command=run_and_display_answer)
+    run_button.pack(pady=10)
+
+    # Run the application
+    root.mainloop()
+
+def run_model_for_all_pdfs(question):
+    all_answers = []
+    for root, _, files in os.walk(PDF_PATH):
+        for file in files:
+            if file.endswith(".pdf"):
+                pdf_path = os.path.join(root, file)
+                pdf_text = extract_text_with_page_numbers(pdf_path)
+                model = SentenceTransformer('all-MiniLM-L6-v2')
+                pdf_embeddings = create_embeddings(model, pdf_text)
+                answer = search_answer_in_pdf(question, pdf_text, pdf_embeddings, model)
+                all_answers.append(f"File: {file}\n{answer}\n")
+    return "\n".join(all_answers)
+
+def extract_text_with_page_numbers(pdf_path):
+    doc = fitz.open(pdf_path)
+    pdf_text = {}
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        text = page.get_text()
+        pdf_text[page_num + 1] = text
+    return pdf_text
+
+def create_embeddings(model, pdf_text):
+    embeddings = {}
+    for page_num, text in pdf_text.items():
+        sentences = text.split('\n')
+        embeddings[page_num] = model.encode(sentences, convert_to_tensor=True)
+    return embeddings
+
+def search_answer_in_pdf(question, pdf_text, pdf_embeddings, model):
+    question_embedding = model.encode(question, convert_to_tensor=True)
+    best_score = -1
+    best_page = None
+    best_sentence = None
+
+    for page_num, embeddings in pdf_embeddings.items():
+        scores = util.pytorch_cos_sim(question_embedding, embeddings)
+        max_score, max_idx = scores.max(dim=1)
+        if max_score.item() > best_score:
+            best_score = max_score.item()
+            best_page = page_num
+            best_sentence = pdf_text[page_num].split('\n')[max_idx.item()]
+
+    if best_score > 0.5:  # Adjust threshold as needed
+        return f"Answer found on page {best_page}: {best_sentence}"
+    else:
+        return "No answer found in the PDF."
+
+
+def main():
+    show_gui()
+    return 0
+
+
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+
+
+
+
+
+
+
