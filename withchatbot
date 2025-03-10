@@ -2,10 +2,9 @@ import os
 import fitz  # PyMuPDF
 import pickle
 from pathlib import Path
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 from sentence_transformers import SentenceTransformer, util
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
-import torch
 
 app = Flask(__name__)
 
@@ -92,11 +91,11 @@ def search_answer_in_pdfs(question):
 
     if alternative_results:
         options = "\n".join(
-            [f"- {res['pdf']} (Page {res['page']})" for res in alternative_results]
+            [f"- {res['pdf']} (Page {res['page']}): {res['sentence'][:100]}..." for res in alternative_results]
         )
         return (
             f"Multiple PDFs contain similar information:\n"
-            f"1. {top_result['pdf']} (Page {top_result['page']})\n{options}\n"
+            f"1. {top_result['pdf']} (Page {top_result['page']}): {top_result['sentence'][:100]}...\n{options}\n"
             "Please specify which one you'd like more details from."
         )
 
@@ -120,6 +119,8 @@ def chat():
     """Handles user questions and returns relevant answers."""
     data = request.json
     question = data.get('question')
+    conversation_history = data.get('history', [])
+
     if not question:
         return jsonify({"error": "No question provided"}), 400
 
@@ -129,12 +130,21 @@ def chat():
     if "Multiple PDFs contain similar information" in retrieved_text:
         return jsonify({"question": question, "answer": retrieved_text})
 
-    generated_answer = generate_answer(question, retrieved_text)
+    # Append the retrieved text to the conversation history
+    conversation_history.append({"role": "system", "content": retrieved_text})
+
+    # Generate an answer using the conversation history as context
+    context = "\n".join([f"{entry['role']}: {entry['content']}" for entry in conversation_history])
+    generated_answer = generate_answer(question, context)
+
+    # Append the generated answer to the conversation history
+    conversation_history.append({"role": "assistant", "content": generated_answer})
 
     return jsonify({
         "question": question,
         "pdf_reference": retrieved_text,
-        "answer": generated_answer
+        "answer": generated_answer,
+        "history": conversation_history
     })
 
 if __name__ == "__main__":
