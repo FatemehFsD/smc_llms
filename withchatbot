@@ -5,10 +5,12 @@ from pathlib import Path
 from flask import Flask, request, jsonify
 from sentence_transformers import SentenceTransformer, util
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
+import torch
 
 app = Flask(__name__)
 
 PDF_FOLDER = "/home/dans/workspace/smc_llms/in/pdfs"
+TARGET_PDF = "om_hrs050_en-v_1_388aa0ae.pdf"
 
 # Load models globally
 print("Initializing models...")
@@ -38,22 +40,23 @@ def create_embeddings(model, pdf_text):
 def load_pdfs():
     """Loads PDFs, extracts text, and generates embeddings."""
     pdf_data = {}
-    for pdf_file in os.listdir(PDF_FOLDER):
-        if pdf_file.endswith(".pdf"):
-            pdf_path = os.path.join(PDF_FOLDER, pdf_file)
-            pdf_text = extract_text_with_page_numbers(pdf_path)
-            pdf_embeddings = create_embeddings(sentence_model, pdf_text)
-            pdf_data[pdf_file] = (pdf_text, pdf_embeddings)
+    pdf_path = os.path.join(PDF_FOLDER, TARGET_PDF)
+    pdf_text = extract_text_with_page_numbers(pdf_path)
+    pdf_embeddings = create_embeddings(sentence_model, pdf_text)
+    pdf_data[TARGET_PDF] = (pdf_text, pdf_embeddings)
     return pdf_data
 
-cache = Path("in/pdf_emb.pkl")
+cache_dir = Path("in")
+cache_dir.mkdir(parents=True, exist_ok=True)
+cache = cache_dir / "pdf_emb.pkl"
 if cache.exists():
     print("Loading cached embeddings...")
-    pdf_data = pickle.loads(cache.read_bytes())
+    pdf_data = torch.load(cache)
 else:
     print("Processing PDFs and storing embeddings...")
     pdf_data = load_pdfs()
-    pickle.dump(pdf_data, cache.open("wb"))
+    with cache.open("wb") as f:
+        pickle.dump(pdf_data, f)
 
 def search_answer_in_pdfs(question):
     """Finds the best matching page for a question and provides multiple choices if needed."""
@@ -64,7 +67,7 @@ def search_answer_in_pdfs(question):
 
     for pdf_name, (pdf_text, pdf_embeddings) in pdf_data.items():
         for page_num, embeddings in pdf_embeddings.items():
-            scores = util.pytorch_cos_sim(question_embedding, embeddings)
+            scores = util.cos_sim(question_embedding, embeddings)
             max_score, max_idx = scores.max(dim=1)
             score_value = max_score.item()
 
@@ -149,4 +152,4 @@ def chat():
 
 if __name__ == "__main__":
     print("Starting server...")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5002, debug=True)

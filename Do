@@ -1,0 +1,225 @@
+import os
+import fitz  # PyMuPDF
+import pickle
+from pathlib import Path
+from flask import Flask, request, jsonify
+from sentence_transformers import SentenceTransformer, util
+from transformers import GPT2Tokenizer, GPT2LMHeadModel
+
+app = Flask(__name__)
+
+PDF_FOLDER = "/home/dans/workspace/smc_llms/in/pdfs"
+
+# Load models globally
+print("Initializing models...")
+sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+gpt2_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+gpt2_model = GPT2LMHeadModel.from_pretrained('gpt2')
+
+def extract_text_with_page_numbers(pdf_path):
+    """Extracts text from a PDF with page numbers."""
+    doc = fitz.open(pdf_path)
+    pdf_text = {}
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        try:
+            text = page.get_text("text")
+        except Exception as e:
+            print(f"Warning: Failed to extract text from page {page_num + 1} in {pdf_path}: {e}")
+            continue
+        if text.strip():  # Avoid empty pages
+            pdf_text[page_num + 1] = text
+    return pdf_text
+
+
+def create_embeddings(model, pdf_text):
+    """Creates sentence embeddings for each page in a PDF."""
+    embeddings = {}
+    for page_num, text in pdf_text.items():
+        sentences = text.split('\n')
+        embeddings[page_num] = model.encode(sentences, convert_to_tensor=True)
+    return embeddings
+
+def load_pdfs():
+    """Loads PDFs, extracts text, and generates embeddings."""
+    pdf_data = {}
+    for pdf_file in os.listdir(PDF_FOLDER):
+        if pdf_file.endswith(".pdf"):
+            pdf_path = os.path.join(PDF_FOLDER, pdf_file)
+            pdf_text = extract_text_with_page_numbers(pdf_path)
+            pdf_embeddings = create_embeddings(sentence_model, pdf_text)
+            pdf_data[pdf_file] = (pdf_text, pdf_embeddings)
+    return pdf_data
+
+cache = Path("in/pdf_emb.pkl")
+if cache.exists():
+    print("Loading cached embeddings...")
+    pdf_data = pickle.loads(cache.read_bytes())
+else:
+    print("Processing PDFs and storing embeddings...")
+    pdf_data = load_pdfs()
+    pickle.dump(pdf_data, cache.open("wb"))
+
+def search_answer_in_pdfs(question):
+    """Finds the best matching pages for a question and provides multiple choices."""
+    question_embedding = sentence_model.encode(question, convert_to_tensor=True)
+    results = []
+    threshold = 0.65
+    similarity_gap = 0.05
+
+    for pdf_name, (pdf_text, pdf_embeddings) in pdf_data.items():
+        for page_num, embeddings in pdf_embeddings.items():
+            scores = util.pytorch_cos_sim(question_embedding, embeddings)
+            max_score, max_idx = scores.max(dim=1)
+            score_value = max_score.item()
+            
+            if score_value > threshold:
+                results.append({
+                    "pdf": pdf_name,
+                    "page": page_num,
+                    "sentence": pdf_text[page_num].split('\n')[max_idx.item()],
+                    "score": score_value
+                })
+    
+    if not results:
+        return {
+            "message": "No relevant information found in the PDFs.",
+            "results": []
+        }
+    
+    results.sort(key=lambda x: x["score"], reverse=True)
+    top_result = results[0]
+    alternative_results = [
+        res for res in results[1:3]  # Up to two alternatives
+        if abs(top_result["score"] - res["score"]) < similarity_gap
+    ]
+
+    if alternative_results:
+        options = [
+            {"pdf": res["pdf"], "page": res["page"], "sentence": res["sentence"][:100]}
+            for res in alternative_results
+        ]
+        return {
+            "message": (
+                f"Multiple PDFs contain similar information. "
+                f"Top result: {top_result['pdf']} (Page {top_result['page']}): {top_result['sentence'][:100]}...\n{options}\n"
+                "Please specify which one you'd like more details from."
+            ),
+            "results": [top_result] + alternative_results,
+            "options": options
+        }
+
+    return {
+        "message": f"Answer found in {top_result['pdf']} (Page {top_result['page']}): {top_result['sentence']}",
+        "results": [top_result]
+    }
+
+@app.route('/refine', methods=['POST'])
+def refine():
+    """Handles user refinement requests for specific PDF details."""
+    data = request.json
+    user_choice = data.get('choice')
+    conversation_history = data.get('history', [])
+
+    if not user_choice:
+        return jsonify({"error": "No choice provided"}), 400
+
+    pdf_name = user_choice.get('pdf')
+    page_num = user_choice.get('page')
+
+    if pdf_name and page_num:
+        pdf_text, _ = pdf_data.get(pdf_name, ({}, {}))
+        detailed_text = pdf_text.get(page_num, "No additional details available.")
+        summary = detailed_text[:500]  # Summarize the content
+        response = f"Details from {pdf_name} (Page {page_num}): {summary}..."
+        conversation_history.append({"role": "system", "content": response})
+
+        return jsonify({
+            "message": response,
+            "history": conversation_history,
+            "next_step": "Are you happy with the results? If not, specify the next PDF and page."
+        })
+    else:
+        response = "Invalid choice provided."
+        conversation_history.append({"role": "system", "content": response})
+        return jsonify({
+            "message": response,
+            "history": conversation_history
+        })
+
+def generate_answer(question, context):
+    """Generates an AI-powered answer based on extracted context."""
+    input_text = f"Question: {question}\nContext: {context}\nAnswer:"
+    inputs = gpt2_tokenizer.encode(input_text, return_tensors='pt')
+    outputs = gpt2_model.generate(inputs, max_length=150, num_return_sequences=1)
+    answer = gpt2_tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return answer.split("Answer:")[-1].strip()
+@app.route('/')
+def home():
+    with open("templates/chat.html", "rt") as file:
+        return file.read()
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    """Handles user questions and returns relevant answers."""
+    data = request.json
+    question = data.get('question')
+    conversation_history = data.get('history', [])
+    user_choice = data.get('choice')
+
+    if not question and not user_choice:
+        return jsonify({"error": "No question or choice provided"}), 400
+
+    if user_choice:
+        # User has selected a specific PDF and page for more details
+        pdf_name = user_choice.get('pdf')
+        page_num = user_choice.get('page')
+        if pdf_name and page_num:
+            pdf_text, _ = pdf_data.get(pdf_name, ({}, {}))
+            detailed_text = pdf_text.get(page_num, "No additional details available.")
+            response = f"Details from {pdf_name} (Page {page_num}): {detailed_text[:500]}..."
+            conversation_history.append({"role": "system", "content": response})
+        else:
+            response = "Invalid choice provided."
+            conversation_history.append({"role": "system", "content": response})
+    else:
+        # Search for answers in PDFs
+        retrieved_text = search_answer_in_pdfs(question)
+        if isinstance(retrieved_text, str):
+            # No relevant results found
+            response = retrieved_text
+            conversation_history.append({"role": "system", "content": response})
+            return jsonify({
+                "question": question,
+                "answer": response,
+                "history": conversation_history
+            })
+        elif isinstance(retrieved_text, list):
+            # Multiple relevant results found
+            options = [
+                {"pdf": res["pdf"], "page": res["page"], "sentence": res["sentence"]}
+                for res in retrieved_text
+            ]
+            response = "Multiple relevant results found. Please select one for more details."
+            conversation_history.append({"role": "system", "content": response})
+            return jsonify({
+                "question": question,
+                "message": response,
+                "options": options,
+                "history": conversation_history
+            })
+
+    # Generate a detailed answer using GPT-2
+    context = "\n".join([f"{entry['role']}: {entry['content']}" for entry in conversation_history])
+    generated_answer = generate_answer(question, context)
+    conversation_history.append({"role": "assistant", "content": generated_answer})
+
+    return jsonify({
+        "question": question,
+        "answer": generated_answer,
+        "history": conversation_history
+    })
+
+if __name__ == "__main__":
+    print("Starting server...")
+    app.run(host='0.0.0.0', port=5000, debug=True)

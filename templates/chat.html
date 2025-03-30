@@ -63,6 +63,7 @@
     </div>
 
     <script>
+        var phase = 0;
         function appendMessage(sender, message) {
             let chatBox = document.getElementById("chat-box");
             let messageDiv = document.createElement("div");
@@ -80,14 +81,21 @@
             appendMessage("user", "You: " + userMessage);
             inputField.value = "";
 
+            ++phase;
             let response = await fetch("/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ question: userMessage })
+                body: JSON.stringify({ question: userMessage, phase: phase })
             });
 
             let data = await response.json();
             appendMessage("bot", "Bot: " + data.answer);
+            if (data.answer === "No relevant answer found in the PDFs.") {
+                --phase;
+            }
+            if (data.answer.startsWith("Please enter the number of the PDF")) {
+                --phase;
+            }
         }
     </script>
 </body>

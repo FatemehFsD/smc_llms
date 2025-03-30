@@ -1,0 +1,226 @@
+import os
+import fitz  # PyMuPDF
+import pickle
+from pathlib import Path
+from flask import Flask, request, jsonify
+from sentence_transformers import SentenceTransformer, util
+from transformers import GPT2Tokenizer, GPT2LMHeadModel
+from transformers import pipeline
+
+
+app = Flask(__name__)
+
+PDF_FOLDER = "/home/dans/workspace/smc_llms/in/pdfs"
+CONVERSATION_HISTORY = []
+ORIGINAL_QUESTION = None
+FOUND_PDF_OPTIONS = []
+
+# Load models globally
+print("Initializing models...")
+sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+gpt2_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+gpt2_model = GPT2LMHeadModel.from_pretrained('gpt2')
+
+def extract_text_with_page_numbers(pdf_path):
+    """Extracts text from a PDF with page numbers."""
+    doc = fitz.open(pdf_path)
+    pdf_text = {}
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        try:
+            text = page.get_text("text")
+        except Exception as e:
+            print(f"Warning: Failed to extract text from page {page_num + 1} in {pdf_path}: {e}")
+            continue
+        if text.strip():  # Avoid empty pages
+            pdf_text[page_num + 1] = text
+    return pdf_text
+
+def create_embeddings(model, pdf_text):
+    """Creates sentence embeddings for each page in a PDF."""
+    embeddings = {}
+    for page_num, text in pdf_text.items():
+        sentences = text.split('\n')
+        embeddings[page_num] = model.encode(sentences, convert_to_tensor=True)
+    return embeddings
+
+def load_pdfs():
+    """Loads PDFs, extracts text, and generates embeddings."""
+    pdf_data = {}
+    for pdf_file in os.listdir(PDF_FOLDER):
+        if pdf_file.endswith(".pdf"):
+            pdf_path = os.path.join(PDF_FOLDER, pdf_file)
+            pdf_text = extract_text_with_page_numbers(pdf_path)
+            pdf_embeddings = create_embeddings(sentence_model, pdf_text)
+            pdf_data[pdf_file] = (pdf_text, pdf_embeddings)
+    return pdf_data
+
+cache = Path("in/pdf_emb.pkl")
+if cache.exists():
+    print("Loading cached embeddings...")
+    pdf_data = pickle.loads(cache.read_bytes())
+else:
+    print("Processing PDFs and storing embeddings...")
+    pdf_data = load_pdfs()
+    pickle.dump(pdf_data, cache.open("wb"))
+
+def search_answer_in_pdfs(question):
+    """Finds the best matching page for a question and provides multiple choices if needed."""
+    question_embedding = sentence_model.encode(question, convert_to_tensor=True)
+    results = []
+    threshold = 0.65  # Minimum confidence level for a valid match
+    similarity_gap = 0.05  # How close scores need to be to trigger clarification
+
+    for pdf_name, (pdf_text, pdf_embeddings) in pdf_data.items():
+        for page_num, embeddings in pdf_embeddings.items():
+            scores = util.pytorch_cos_sim(question_embedding, embeddings)
+            max_score, max_idx = scores.max(dim=1)
+            score_value = max_score.item()
+
+            if score_value > threshold:
+                results.append({
+                    "pdf": pdf_name,
+                    "page": page_num,
+                    "sentence": pdf_text[page_num].split('\n')[max_idx.item()],
+                    "score": score_value
+                })
+
+    if not results:
+        return "No relevant answer found in the PDFs."
+
+    # Sort results by confidence
+    results.sort(key=lambda x: x["score"], reverse=True)
+
+    # If multiple results have very close scores, provide choices instead of looping
+    top_result = results[0]
+    FOUND_PDF_OPTIONS.append((top_result['pdf'], top_result['page'], top_result['sentence']))
+    alternative_results = [
+        res for res in results[1:3]  # Up to two alternatives
+        if abs(top_result["score"] - res["score"]) < similarity_gap
+    ]
+
+    if alternative_results:
+        for alt in alternative_results:
+            FOUND_PDF_OPTIONS.append((alt["pdf"], alt["page"], alt['sentence']))
+
+        options = "\n".join(
+            [f"{i}. {res['pdf']} (Page {res['page']})" for i, res in enumerate(alternative_results, 2)]
+        )
+        return (
+            f"Multiple PDFs contain similar information:\n"
+            f"1. {top_result['pdf']} (Page {top_result['page']})\n{options}\n"
+            "Please specify the number of the PDF from which you'd like more details."
+        )
+
+    return f"Answer found in {top_result['pdf']} (Page {top_result['page']}): {top_result['sentence']}"
+
+def generate_answer(question, context):
+    """Generates an AI-powered answer based on extracted context."""
+    input_text = f"Question: {question}\nContext: {context}\nAnswer:"
+    inputs = gpt2_tokenizer.encode(input_text, return_tensors='pt')
+    outputs = gpt2_model.generate(inputs, max_length=900, num_return_sequences=1, no_repeat_ngram_size=3)
+    answer = gpt2_tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return answer.split("Answer:")[-1].strip()
+
+# def generate_answer(question, context):
+#     """Generates an AI-powered answer based on extracted context."""
+#     input_text = f"Question: {question}\nContext: {context}\nAnswer:"
+#     inputs = gpt2_tokenizer.encode(input_text, return_tensors='pt')
+#     outputs = gpt2_model.generate(inputs, max_length=300, num_return_sequences=1)
+#     answer = gpt2_tokenizer.decode(outputs[0], skip_special_tokens=True)
+#     return answer.split("Answer:")[-1].strip()
+
+def summarize_context(context):
+    """Summarizes text of arbitrary input length."""
+    summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+    max_chunk_size = 1024  # Maximum token size for the summarizer
+    chunks = [context[i:i + max_chunk_size] for i in range(0, len(context), max_chunk_size)]
+    summarized_chunks = [
+        summarizer(chunk, max_length=100, min_length=30, do_sample=False)[0]['summary_text']
+        for chunk in chunks
+    ]
+    return " ".join(summarized_chunks)
+
+@app.route('/')
+def home():
+    global ORIGINAL_QUESTION
+    ORIGINAL_QUESTION = None
+    global FOUND_PDF_OPTIONS
+    FOUND_PDF_OPTIONS = []
+    global CONVERSATION_HISTORY
+    CONVERSATION_HISTORY = []
+    with open("templates/chat.html", "rt") as file:
+        return file.read()
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    """Handles user questions and returns relevant answers."""
+    data = request.json
+    question = data.get('question')
+    phase = data.get('phase')
+    global ORIGINAL_QUESTION
+    global CONVERSATION_HISTORY
+    conversation_history = CONVERSATION_HISTORY
+    
+    retrieved_text = ""
+    if not question:
+        return jsonify({"error": "No question provided"}), 400
+
+    if phase == 1:
+        ORIGINAL_QUESTION = question
+        conversation_history.append({"role": "user", "content": question})
+        retrieved_text = search_answer_in_pdfs(question)
+
+        if "No relevant answer found in the PDFs." in retrieved_text:
+            return jsonify({"question": question, "answer": retrieved_text, "history": []})
+
+        # Append the retrieved text to the conversation history
+        conversation_history.append({"role": "system", "content": retrieved_text})
+
+        # If multiple similar PDFs were found, return options instead of generating an answer
+        if "Multiple PDFs contain similar information" in retrieved_text:
+            return jsonify({"question": question, "answer": retrieved_text, "history": conversation_history})
+
+    if phase == 2:
+        try:
+            selected_pdf_num = int(question)
+            selected_pdf_path = FOUND_PDF_OPTIONS[selected_pdf_num - 1][0]
+            selected_pdf_page = FOUND_PDF_OPTIONS[selected_pdf_num - 1][1]
+            selected_pdf_sentence = FOUND_PDF_OPTIONS[selected_pdf_num - 1][2]
+            # if not selected_pdf_sentence.endswith('.'):
+            #    selected_pdf_sentence += '.'
+            selected_pdf_path = os.path.join(PDF_FOLDER, selected_pdf_path)
+            pdf_text = extract_text_with_page_numbers(selected_pdf_path)
+            pdf_text = pdf_text[selected_pdf_page]
+            context = str(pdf_text)
+            summarized_context = summarize_context(context)
+            generated_answer = generate_answer(ORIGINAL_QUESTION, context)
+            #generated_answer = selected_pdf_sentence
+            return jsonify({
+                "answer": generated_answer,
+            })
+        except (ValueError, TypeError) as error:
+            print(f"Error: {error}")
+            return jsonify({
+                "answer": f"Please enter the number of the PDF (1-{len(FOUND_PDF_OPTIONS)})",
+            })
+
+    # Generate an answer using the conversation history as context
+    context = "\n".join([f"{entry['role']}: {entry['content']}" for entry in conversation_history])
+    print("context is : ")
+    print(context)
+    generated_answer = generate_answer(question, context)
+    
+    # Append the generated answer to the conversation history
+    conversation_history.append({"role": "assistant", "content": generated_answer})
+
+    return jsonify({
+        "question": question,
+        "pdf_reference": retrieved_text,
+        "answer": generated_answer,
+        "history": conversation_history
+    })
+
+if __name__ == "__main__":
+    print("Starting server...")
+    app.run(host='0.0.0.0', port=5000, debug=True)
